@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+extern uv_pipe_t* nodejsipc_pipe;
 int nodejsipc_start(uv_loop_t* loop, bool prevent_loopexit, uv_read_cb read_cb);
 int nodejsipc_stop();
 char* nodejsipc_channel_serialization();
