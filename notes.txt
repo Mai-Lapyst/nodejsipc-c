@@ -1,0 +1,103 @@
+js-vscode
+
+createMessageTransports(?)                                      // https://github.com/microsoft/vscode-languageserver-node/blob/3eddc56d9491b6f97c5e82242a3a14421d42bea1/client/src/node/main.ts#L221
+-> execOptions.stdio = <any>[null, null, null, 'ipc'];          // https://nodejs.org/api/child_process.html#child_process_options_stdio
+-> args.push('--node-ipc');
+-> serverProcess = cp.spawn(node.runtime, args, execOptions)
+-> IPCMessageReader(serverProcess)                              // https://github.com/microsoft/vscode-languageserver-node/blob/3eddc56d9491b6f97c5e82242a3a14421d42bea1/jsonrpc/src/node/main.ts#L43
+    -> eventemitter stuff like on(event, ...) and send(...)
+
+js-nodejs
+
+spawn(file, args, opts)             // https://github.com/nodejs/node/blob/master/lib/child_process.js
+-> child = new ChildProcess
+-> child.spawn(normalize(file, args, opts))
+-> return child
+
+https://github.com/nodejs/node/blob/master/lib/internal/child_process.js
+
+ChildProcess.new()
+-> this._handle = new Process()
+
+ChildProcess.spawn(opts)
+-> stdio = {
+    stdio = [
+     { type: 'pipe', readable: true , writeable: false, handle: new Pipe(PipeConstants.SOCKET) },
+     { type: 'pipe', readable: false, writeable: true , handle: new Pipe(PipeConstants.SOCKET) },
+     { type: 'pipe', readable: false, writeable: true , handle: new Pipe(PipeConstants.SOCKET) },
+     { type: 'ipc' , ipc: new Pipe(PipeConstants.IPC), ipcfd: 3 },
+    ],
+    ipc -> ./stdio[3]/ipc
+    ipcfd -> ./stdio[3]/ipcfd -> 3
+   }
+-> serialization = 'json'
+-> setupChannel(this, stdio.ipc, serialization)
+
+setupChannel(target, channel, serializationMode)
+-> control = new Control(channel)       // this tracks references / listener counts, calls ref and unref on the channel
+-> target.channel = channel             // maybe some way so we save us our channel for later use
+-> load initMessageChannel, parse- & writeChannelMessages form the serializer
+-> initMessageChannel(channel)
+-> channel.onread = function() { ... }
+-> target.on('internalMessage', function(message, handle) { ... })
+-> target.send = function(message, handle, options, callback) { ... }
+-> target._send = function(message, handle, options, callback) { ... }
+-> target.disconnect = function() { ... }
+-> target._disconnect = function() { ... }
+-> channel.readStart()
+
+c++/nodejs
+
+PipeWrap::Instantiate
+-> gets constructor and calls them with the integer value of SocketType(SOCKET, SERVER, IPC)
+
+PipeWrap::New
+-> casting integer tyoe frin args to SocketType
+-> if SOCKET: provider = PROVIDER_PIPEWRAP       & ipc = false
+-> if SERVER: provider = PROVIDER_PIPESERVERWRAP & ipc = false
+-> if IPC   : provider = PROVIDER_PIPEWRAP       & ipc = true
+-> new PipeWrap(env, args.This(), provider, ipc);
+
+PipeWrap::PipeWrap(Environment* env, Local object, ProviderType provider, bool ipc)    // used when calling new PipeWrap
+    => ConnectionWrap(env, object, provider)
+-> uv_pipe_init(env->event_loop(), &handle_, ipc);          // handle_ is from ConnectionWrap; type: uv_pipe_t
+
+ConnectionWrap::ConnectionWrap(Environment* env, Local object, ProviderType provider)
+    => LibuvStreamWrap(env, object, reinterpret_cast<uv_stream_t*>(&handle_), provider)
+
+LibuvStreamWrap::LibuvStreamWrap(Environment* env, Local object, uv_stream_t* stream, ProviderType provider)
+    => HandleWrap(env, object, reinterpret_cast<uv_handle_t*>(stream), provider)
+    => StreamBase(env)
+-> stream_ = stream
+-> StreamBase::AttachToObject(object)
+
+HandleWrap::HandleWrap(Environment* env, Local object, uv_handle_t* handle, ProviderType provider)
+    => AsyncWrap(env, object, provider)
+-> state_ = kInitialized
+-> handle_ = handle             // is not same variable as ConnectionWrap; type: uv_handle_t*
+-> handle_->data = this
+
+AsyncWrap::AsyncWrap(Environment* env, Local object, ProviderType provider, double execution_async_id = kInvalidAsyncId)
+-> AsyncWrap(env, object, provider, execution_async_id, false)
+
+AsyncWrap::AsyncWrap(Environment* env, Local object, ProviderType provider, double execution_async_id, bool silent)
+-> AsyncWrap(env, object) => { BaseObject(env, object) }
+-> provider_type_ = provider
+-> AsyncReset(object, execution_async_id, silent)       // Use AsyncReset() call to execute the init() callbacks.
+-> init_hook_ran_ = true
+
+AsyncWrap::AsyncReset(Local resource, double execution_async_id, bool silent)
+-> generate a new async id and save it into async_id_
+-> trigger_async_id_ = env()->get_default_trigger_async_id()
+-> make some tracing data
+-> EmitAsyncInit(env(), resource, env()->async_hooks()->provider_string(provider_type()), async_id_, trigger_async_id_);
+
+AsyncWrap::EmitAsyncInit(Environment* env, Local<Object> object, Local<String> type, double async_id, double trigger_async_id)
+-> ...?
+
+LibuvStreamWrap::ReadStart()
+-> uv_read_start(
+    stream(),       // function that returns stream_; type: uv_stream_t*
+    OnUvAlloc,      // allocation callback
+    OnUvRead        // read callback
+   )
